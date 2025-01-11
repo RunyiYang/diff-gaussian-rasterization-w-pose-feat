@@ -111,7 +111,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         num_rendered = ctx.num_rendered
         raster_settings = ctx.raster_settings
         colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
-
+        
         # Restructure args as C++ method expects them
         args = (raster_settings.bg,
                 means3D,
@@ -167,7 +167,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_rho,
             None,
         )
-
+        # print(grads[0].shape, grads[1].shape, grads[2].shape, grads[3].shape, grads[4].shape, grads[5].shape, grads[6].shape, grads[7].shape, grads[8].shape, grads[9].shape, grads[10])
         return grads
 
 class GaussianRasterizationSettings(NamedTuple):
