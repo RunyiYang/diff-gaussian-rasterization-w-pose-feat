@@ -560,7 +560,7 @@ __device__ void render_cuda_reduce_sum(group_t g, Lists... lists) {
 
 
 // Backward version of the rendering procedure.
-template <uint32_t C>
+template <uint32_t C, uint32_t O>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -570,15 +570,18 @@ renderCUDA(
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
+	const float* __restrict__ objects,
 	const float* __restrict__ depths,
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
+	const float* __restrict__ dL_dpixels_objs,
 	const float* __restrict__ dL_dpixels_depth,
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
+	float* __restrict__ dL_dobjects,
 	float* __restrict__ dL_ddepths)
 {
 	// We rasterize again. Compute necessary block info.
@@ -604,10 +607,12 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
+	__shared__ float collected_objects[O * BLOCK_SIZE];
 	__shared__ float collected_depths[BLOCK_SIZE];
 
 	__shared__ float2 dL_dmean2D_shared[BLOCK_SIZE];
 	__shared__ float3 dL_dcolors_shared[BLOCK_SIZE];
+	__shared__ float3 dL_dobjects_shared[BLOCK_SIZE];
 	__shared__ float dL_ddepths_shared[BLOCK_SIZE];
 	__shared__ float dL_dopacity_shared[BLOCK_SIZE];
 	__shared__ float4 dL_dconic2D_shared[BLOCK_SIZE];
@@ -616,14 +621,15 @@ renderCUDA(
 	// product of all (1 - alpha) factors. 
 	const float T_final = inside ? final_Ts[pix_id] : 0;
 	float T = T_final;
-
 	// We start from the back. The ID of the last contributing
 	// Gaussian is known from each pixel from the forward.
 	uint32_t contributor = toDo;
 	const int last_contributor = inside ? n_contrib[pix_id] : 0;
 
 	float accum_rec[C] = { 0 };
+	float accum_rec_obj[O] = { 0 };
 	float dL_dpixel[C] = { 0 };
+	float dL_dpixel_obj[O] = { 0 };
 	float accum_rec_depth = 0;
 	float dL_dpixel_depth = 0;
 	if (inside) {
@@ -631,11 +637,15 @@ renderCUDA(
 		for (int i = 0; i < C; i++) {
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
 		}
+		for (int i = 0; i < O; i++) {
+			dL_dpixel_obj[i] = dL_dpixels_objs[i * H * W + pix_id];
+		}
 		dL_dpixel_depth = dL_dpixels_depth[pix_id];
 	}
 
 	float last_alpha = 0.f;
 	float last_color[C] = { 0.f };
+	float last_object[O] = { 0.f };
 	float last_depth = 0.f;
 
 	// Gradient of pixel coordinate w.r.t. normalized 
@@ -660,7 +670,9 @@ renderCUDA(
 			#pragma unroll
 			for (int i = 0; i < C; i++) {
 				collected_colors[i * BLOCK_SIZE + tid] = colors[coll_id * C + i];
-				
+			}
+			for (int i = 0; i < O; i++) {
+				collected_objects[i * BLOCK_SIZE + tid] = objects[coll_id * O + i];
 			}
 			collected_depths[tid] = depths[coll_id];
 		}
@@ -716,7 +728,21 @@ renderCUDA(
 
 				const float dL_dchannel = dL_dpixel[ch];
 				dL_dalpha += (c - accum_rec[ch]) * dL_dchannel;
-				local_dL_dcolors[ch] = skip ? 0.0f : dchannel_dcolor * dL_dchannel;
+				// atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
+
+			}
+
+			for (int ch = 0; ch < O; ch++)
+			{
+				const float o = collected_objects[ch * BLOCK_SIZE + j];
+				// Update last object (to be used in the next iteration)
+				accum_rec_obj[ch] = skip ? accum_rec_obj[ch] : last_alpha * last_object[ch] + (1.f - last_alpha) * accum_rec_obj[ch];
+				last_object[ch] = skip ? last_object[ch] : o;
+
+				const float dL_dchannel_obj = dL_dpixel_obj[ch];
+				dL_dalpha += (o - accum_rec_obj[ch]) * dL_dchannel_obj;
+
+				atomicAdd(&(dL_dobjects[global_id * O + ch]), dchannel_dcolor * dL_dchannel_obj);
 			}
 			dL_dcolors_shared[tid].x = local_dL_dcolors[0];
 			dL_dcolors_shared[tid].y = local_dL_dcolors[1];
@@ -761,6 +787,7 @@ renderCUDA(
 				dL_dconic2D_shared,
 				dL_dopacity_shared,
 				dL_dcolors_shared, 
+				dL_dobjects_shared,
 				dL_ddepths_shared
 			);	
 			
@@ -868,18 +895,21 @@ void BACKWARD::render(
 	const float2* means2D,
 	const float4* conic_opacity,
 	const float* colors,
+	const float* objects,
 	const float* depths,
 	const float* final_Ts,
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
+	const float* dL_dpixels_objs,
 	const float* dL_dpixels_depth,
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
+	float* dL_dobjects,
 	float* dL_ddepths)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
+	renderCUDA<NUM_CHANNELS, NUM_OBJECTS> << <grid, block >> >(
 		ranges,
 		point_list,
 		W, H,
@@ -887,15 +917,18 @@ void BACKWARD::render(
 		means2D,
 		conic_opacity,
 		colors,
+		objects,
 		depths,
 		final_Ts,
 		n_contrib,
 		dL_dpixels,
+		dL_dpixels_objs,
 		dL_dpixels_depth,
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors,
+		dL_dobjects,
 		dL_ddepths
 	);
 }

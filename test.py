@@ -12,6 +12,7 @@ def params(N):
         "means3D": torch.rand(N, 3, device='cuda:0', requires_grad=True),
         # "means2D": torch.zeros((N, 3), dtype=torch.float32, device='cuda:0'),  # Not optimizing this (by default)
         # "shs": torch.rand(N, 3, 3, device='cuda:0'),  # Not optimizing this (by default)
+        "sh_objs": torch.rand(N, 1, 16, device='cuda:0', requires_grad=True),
         "colors_precomp": torch.rand(N, 3, device='cuda:0', requires_grad=True),
         "opacities": torch.rand(N, 1, device='cuda:0', requires_grad=True),
         "scales": torch.rand(N, 3, device='cuda:0', requires_grad=True),
@@ -51,7 +52,7 @@ def render(params):
         sh_degree=0, 
         campos=torch.tensor([1.8626e-08, 1.1921e-07, 1.1921e-07], device='cuda:0'), 
         prefiltered=False, 
-        debug=False
+        debug=True
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -71,13 +72,14 @@ def render(params):
     # cov3D_precomp = params["cov3D_precomp"]
     cam_rot_delta = params["theta"]
     cam_trans_delta = params["rho"]
-    
+    shs_objs = params["sh_objs"]    
 
 
-    rendered_image, radii, depth, opacity, n_touched = rasterizer(
+    rendered_image, rendered_obj, radii, depth, opacity, n_touched = rasterizer(
         means3D=means3D,
         means2D=means2D,
         shs=None,
+        sh_objs=shs_objs,
         colors_precomp=colors_precomp,
         opacities=opacity,
         scales=scales,
@@ -86,7 +88,7 @@ def render(params):
         theta=cam_rot_delta,
         rho=cam_trans_delta,
     )
-
+    print(rendered_image.shape, rendered_obj.shape, radii.shape, depth.shape, opacity.shape, n_touched.shape)
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {
@@ -131,6 +133,7 @@ if __name__ == "__main__":
         init_params["rotations"],
         init_params["theta"],
         init_params["rho"],
+        init_params["sh_objs"],
     ]
     # start lr = 0.01, decay by 0.1 every 1000 steps
     optimizer = torch.optim.Adam(trainable_params, lr=0.01)
