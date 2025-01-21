@@ -393,7 +393,8 @@ renderCUDA(
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 		}
 		for (int ch = 0; ch < OBJECTS; ch++){
-			out_objects[ch * H * W + pix_id] = O[ch];}
+			out_objects[ch * H * W + pix_id] = O[ch];
+		}
 		out_depth[pix_id] = D;
 		out_opacity[pix_id] = 1 - T;
 	}

@@ -728,6 +728,7 @@ renderCUDA(
 
 				const float dL_dchannel = dL_dpixel[ch];
 				dL_dalpha += (c - accum_rec[ch]) * dL_dchannel;
+				local_dL_dcolors[ch] = skip ? 0.0f : dchannel_dcolor * dL_dchannel;
 				// atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
 
 			}

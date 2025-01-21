@@ -12,7 +12,7 @@ def params(N):
         "means3D": torch.rand(N, 3, device='cuda:0', requires_grad=True),
         # "means2D": torch.zeros((N, 3), dtype=torch.float32, device='cuda:0'),  # Not optimizing this (by default)
         # "shs": torch.rand(N, 3, 3, device='cuda:0'),  # Not optimizing this (by default)
-        "sh_objs": torch.rand(N, 1, 16, device='cuda:0', requires_grad=True),
+        "sh_objs": torch.rand(N, 1, 3, device='cuda:0', requires_grad=True),
         "colors_precomp": torch.rand(N, 3, device='cuda:0', requires_grad=True),
         "opacities": torch.rand(N, 1, device='cuda:0', requires_grad=True),
         "scales": torch.rand(N, 3, device='cuda:0', requires_grad=True),
@@ -88,7 +88,7 @@ def render(params):
         theta=cam_rot_delta,
         rho=cam_trans_delta,
     )
-    print(rendered_image.shape, rendered_obj.shape, radii.shape, depth.shape, opacity.shape, n_touched.shape)
+    # print(rendered_image.shape, rendered_obj.shape, radii.shape, depth.shape, opacity.shape, n_touched.shape)
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {
@@ -98,6 +98,7 @@ def render(params):
         "depth": depth,
         "opacity": opacity,
         "n_touched": n_touched,
+        "sh_objs": rendered_obj,
     }
 
 if __name__ == "__main__":
@@ -146,7 +147,8 @@ if __name__ == "__main__":
         
         rendered_pkg = render(init_params)
         rendered_img = rendered_pkg['render']
-        loss = mse_loss(rendered_img, img) + init_params["scales"].abs().mean() * 0.01
+        rendered_obj = rendered_pkg['sh_objs']
+        loss = mse_loss(rendered_img, img) + mse_loss(rendered_obj, point_feature) + init_params["scales"].abs().mean() * 0.01
         losses.append(loss.item())
         loss.backward()
         optimizer.step()
@@ -156,6 +158,7 @@ if __name__ == "__main__":
             # save loss fig and current rendered image
             print(f"Step {i}, loss {loss.item()}")
             cv2.imwrite(f"test/rendered_{i}.png", (rendered_img.permute(1, 2, 0).cpu().detach().numpy() * 255).astype(np.uint8))
+            cv2.imwrite(f"test/point_feature_{i}.png", (rendered_obj.permute(1, 2, 0).cpu().detach().numpy() * 255).astype(np.uint8))
             # Save loss fig
             import matplotlib.pyplot as plt
             plt.plot(losses)
