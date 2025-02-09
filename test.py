@@ -141,7 +141,7 @@ if __name__ == "__main__":
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[3000, 6000], gamma=0.1)
     losses = []
     mse_loss = torch.nn.MSELoss()
-    for i in range(10000):
+    for i in range(30000):
         optimizer.zero_grad()
         
         
